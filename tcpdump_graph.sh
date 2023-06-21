@@ -2,9 +2,10 @@
 
 set -e
 
-ARRAY=()
+CONTAINERS=()
+HOSTS=()
 OPTS=($@)
-IMAGE_PATH="/var/www/web"
+IMAGE_PATH="./"
 CONTAINERSLIST="containers.list"
 DUMP="dump.txt"
 
@@ -46,36 +47,39 @@ function getIfByContainerName(){
   echo "$IFNAME"
 }
 
+function getNetworkList(){
+  sshRun "if docker >/dev/null 2>&1; then docker network inspect --format='{{range .Containers}}{{.Name}}:{{println (index (split .IPv4Address \"/\") 0)}}{{end}}' \$(docker network ls -q); fi"
+}
+function getServiceList(){
+  sshRun "if docker >/dev/null 2>&1; then docker service inspect --format='{{.Spec.Name}}:{{range .Endpoint.VirtualIPs}}{{.Addr}},{{end}}' \$(docker service ls -q)|sed 's|/24||g'; fi"
+}
 function getContainerList(){
-  sshRun "if docker >/dev/null 2>&1; then docker inspect --format='{{.Name}}:{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \$(docker ps -qa)|sed 's/^\///'; fi"
+  sshRun "if docker >/dev/null 2>&1; then docker inspect --format='{{.Name}}:{{range.NetworkSettings.Networks}}{{.IPAddress}},{{end}}' \$(docker ps -qa)|sed 's/^\///'; fi"
 }
 
 function tcpDump(){
-  local VAR="$1"
-  if $CMODE; then
-    IFNAME="$(getIfByContainerName "$VAR")"
-  else
-    IFNAME="$VAR"
-  fi
-  sudo tcpdump -ltnni "$IFNAME" ip and '(udp or tcp and not tcp[tcpflags]&tcp-rst != 0 )'
+  local CONTAINER="$1"
+#  docker run -i --net container:"$CONTAINER" nicolaka/netshoot tcpdump -ltnni any ip and '(udp or tcp and not tcp[tcpflags]&tcp-rst != 0 )'
+  docker run --rm --net container:"$CONTAINER" nicolaka/netshoot tcpdump -ltnni any ip and '(udp or tcp and not tcp[tcpflags]&tcp-rst != 0 )'
 }
 
 function runTcpDump(){
-  sshRun "$(declare -f tcpDump getIfByContainerName); CMODE="$CMODE"; tcpDump "$VAR""
+  sshRun "$(declare -f tcpDump getIfByContainerName); tcpDump "$CONTAINER""
 }
 
 function on_exit() {
   cat "${STR[@]}" > "$DUMP" && 
   ./create_dgraph.pl "$CONTAINERSLIST" "$DUMP" "$DUMP".dot &&
 #  neato -Kfdp -Tjpg -o "$IMAGE_PATH"/"$DUMP".jpg "$DUMP".dot && 
-  neato -Kfdp -Tpdf -o "$IMAGE_PATH"/"$DUMP".pdf "$DUMP".dot && 
-  rm -f "${STR[@]}" "$CONTAINERSLIST" "$DUMP".dot "$DUMP"
+  neato -Kfdp -Tpdf -o "$IMAGE_PATH"/"$DUMP".pdf "$DUMP".dot \
+  &&  rm -f "${STR[@]}" "$CONTAINERSLIST" "$DUMP".dot "$DUMP"
+#  &&  rm -f "${STR[@]}" "$DUMP".dot "$DUMP"
 }
 
 usage(){
 
 cat <<EOF
-Usage: ${BASH_SOURCE[0]} -H <host_ip> -U <ssh_username> [-c|-i] <containers_names|interface_names>
+Usage: ${BASH_SOURCE[0]} -H <host_ip> -U <ssh_username> [-c|-i] <container_names|interface_names>
 Scripts to visualize tcpdump out.
 OPTIONS:
   -H, --host              host IP to run tcpdump
@@ -91,17 +95,21 @@ for((i=0; i < ${#OPTS[@]}; i++)); do
  key=${OPTS[$i]}
     case ${key} in
             -c|--containers)
-                    CMODE=true
                     ((++i))
-                    add_to_array ARRAY
+                    add_to_array CONTAINERS
                     ;;
             -U|--user)
                     ((++i))
                     USER="${OPTS[$i]}"
                     ;;
+            -M|--manager)
+                    ((++i))
+                    MANAGER="${OPTS[$i]}"
+                    ;;
             -H|--host)
                     ((++i))
-                    HOST="${OPTS[$i]}"
+                    add_to_array HOSTS
+#                    HOST="${OPTS[$i]}"
                     ;;
             -i|--interfaces)
                     CMODE=false
@@ -119,13 +127,25 @@ for((i=0; i < ${#OPTS[@]}; i++)); do
     esac
 done
 
+
 trap on_exit EXIT
 
-getContainerList > "$CONTAINERSLIST"
+HOST=$MANAGER
 
-for VAR in ${ARRAY[@]}; do
-  STR+=($VAR.dump)
-  runTcpDump "$VAR" > "$VAR".dump &
+if [[ -n "$MANAGER" ]]; then
+  getServiceList >> "$CONTAINERSLIST"
+fi
+
+for HOST in ${HOSTS[@]}; do
+  echo $HOST
+  getContainerList >> "$CONTAINERSLIST"
+  getNetworkList >> "$CONTAINERSLIST"
+done
+
+for CONTAINER in ${CONTAINERS[@]}; do
+  STR+=($CONTAINER.dump)
+  runTcpDump "$CONTAINER" > "$CONTAINER".dump &
 done
 
 wait
+

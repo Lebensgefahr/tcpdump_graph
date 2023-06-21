@@ -16,17 +16,24 @@ if (-e $cont_list) {
   open (FH, $cont_list);
   while (my $str = <FH>) {
     chomp $str;
-    my ($name, $ip) = split(':', $str);
-    $containers{$ip} = $name;
+    my ($name, $ips) = split(':', $str);
+    my (@ip) = split(',', $ips);
+    for my $ip (@ip) {
+      $containers{$ip} = $name;
+#      print ("$ip"."\n");
+#print Dumper \%containers;
+    }
   }
 }
+
 close(FH);
 
 open (FH, $dump) or die "Could not open file '$dump' $!";
 while (my $str = <FH>) {
   chomp $str;
-  if($str =~ m/^IP\s(\d{1,3}(?:\.\d{1,3}){3})\.(\d{1,5})\s>\s(\d{1,3}(?:\.\d{1,3}){3})\.(\d{1,5}):\s(?!UDP)/){
-
+#  if($str =~ m/^IP\s(\d{1,3}(?:\.\d{1,3}){3})\.(\d{1,5})\s>\s(\d{1,3}(?:\.\d{1,3}){3})\.(\d{1,5}):\s(?!UDP)/){
+  if($str =~ m/.*IP\s(\d{1,3}(?:\.\d{1,3}){3})\.(\d{1,5})\s>\s(\d{1,3}(?:\.\d{1,3}){3})\.(\d{1,5}):\s(?!UDP)/){
+#    print ($1." ".$2." ".$3." ".$4."\n");
     my ($src_ip, $src_port, $dst_ip, $dst_port) = ($1, $2, $3, $4);
     if (exists $random_ports{$src_port}) {
       $src_port = "random";
